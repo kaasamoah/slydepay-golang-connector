@@ -14,8 +14,8 @@ type SlydepayInApp struct {
 
 func main() {
 	creds := new(model.PayliveCredentials)
-	creds.SetMerchantEmail("iwallet@dreamoval.com")
-	creds.SetMerchantKey("bdVI+jtRl80PG4x6NMvYOwfZTZtwfN")
+	creds.SetMerchantEmail("merchantEmail")
+	creds.SetMerchantKey("merchantKey")
 
 	order := new(model.PaymentOrder)
 	order.SetOrderId(strconv.FormatInt(time.Now().UnixNano(), 16))
