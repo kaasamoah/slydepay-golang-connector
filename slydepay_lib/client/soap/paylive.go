@@ -22,7 +22,10 @@ func CreateOrder(credentials model.PayliveCredentials, order model.PaymentOrder)
 	envelope += GenerateBodyXML(order)
 	envelope += "</soapenv:Envelope>"
 
-	response := CallPaylive(envelope)
+	response, success := CallPaylive(envelope)
+	if !success {
+		return response, success
+	}
 	return ParseToken(response)
 }
 
@@ -32,7 +35,10 @@ func VerifyPayment(credentials model.PayliveCredentials, orderId string) (result
 	envelope += fmt.Sprintf("<soapenv:Body><pay:verifyMobilePayment><pay:orderId>%s</pay:orderId></pay:verifyMobilePayment></soapenv:Body>", orderId)
 	envelope += "</soapenv:Envelope>"
 
-	response := CallPaylive(envelope)
+	response, success := CallPaylive(envelope)
+	if !success {
+		return response, success
+	}
 
 	path := xmlpath.MustCompile("//status")
 	root, err := xmlpath.Parse(strings.NewReader(response))
@@ -72,7 +78,10 @@ func ConfirmOrder(credentials model.PayliveCredentials, token string, transactio
 	envelope += fmt.Sprintf("<soapenv:Body><pay:ConfirmTransaction><pay:payToken>%s</pay:payToken><pay:transactionId>%s</pay:transactionId></pay:ConfirmTransaction></soapenv:Body>", token, transactionId)
 	envelope += "</soapenv:Envelope>"
 
-	response := CallPaylive(envelope)
+	response, success := CallPaylive(envelope)
+	if !success {
+		return response, success
+	}
 
 	path := xmlpath.MustCompile("//ConfirmTransactionResult")
 	root, err := xmlpath.Parse(strings.NewReader(response))
@@ -92,6 +101,37 @@ func ConfirmOrder(credentials model.PayliveCredentials, token string, transactio
 		return "Invalid token", false
 	}
 	return "Transaction completed successfully", true
+}
+
+func CancelOrder(credentials model.PayliveCredentials, token string, transactionId string) (result string, success bool) {
+	var envelope = "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pay=\"http://www.i-walletlive.com/payLIVE\">"
+	envelope += GenerateHeaderXML(credentials)
+	envelope += fmt.Sprintf("<soapenv:Body><pay:CancelTransaction><pay:payToken>%s</pay:payToken><pay:transactionId>%s</pay:transactionId></pay:CancelTransaction></soapenv:Body>", token, transactionId)
+	envelope += "</soapenv:Envelope>"
+
+	response, success := CallPaylive(envelope)
+	if !success {
+		return response, success
+	}
+
+	path := xmlpath.MustCompile("//CancelTransactionResult")
+	root, err := xmlpath.Parse(strings.NewReader(response))
+	if err != nil {
+		log.Fatalf("Error reading response from server: %s", err.Error())
+		return "", false
+	}
+
+	confirmed, ok := path.String(root)
+	if !ok {
+		return "Server returned unexpected response", false
+	}
+	if confirmed == "0" {
+		return "Invalid transaction Id", false
+	}
+	if confirmed == "-1" {
+		return "Invalid token", false
+	}
+	return "Transaction cancelled successfully", true
 }
 
 func GenerateHeaderXML(credentials model.PayliveCredentials) (headerXML string) {
@@ -133,38 +173,40 @@ func GenerateBodyXML(order model.PaymentOrder) (bodyXML string) {
 
 func GenerateItemXML(item model.OrderItem) (itemXML string) {
 	var orderItem = "<pay:OrderItem>"
-	orderItem += "<pay:ItemCode>" + item.ItemCode() + "</pay:ItemCode>"
-	orderItem += "<pay:ItemName>" + item.ItemName() + "</pay:ItemName>"
-	orderItem += "<pay:UnitPrice>" + strconv.FormatFloat(item.UnitPrice(), 'f', -1, 64) + "</pay:UnitPrice>"
-	orderItem += "<pay:Quantity>" + strconv.FormatInt(int64(item.Quantity()), 10) + "</pay:Quantity>"
-	orderItem += "<pay:SubTotal>" + strconv.FormatFloat(item.SubTotal(), 'f', -1, 64) + "</pay:SubTotal>"
+	orderItem += "<pay:ItemCode>" + item.ItemCode + "</pay:ItemCode>"
+	orderItem += "<pay:ItemName>" + item.ItemName + "</pay:ItemName>"
+	orderItem += "<pay:UnitPrice>" + strconv.FormatFloat(item.UnitPrice, 'f', -1, 64) + "</pay:UnitPrice>"
+	orderItem += "<pay:Quantity>" + strconv.FormatInt(int64(item.Quantity), 10) + "</pay:Quantity>"
+	orderItem += "<pay:SubTotal>" + strconv.FormatFloat(item.SubTotal, 'f', -1, 64) + "</pay:SubTotal>"
 	orderItem += "</pay:OrderItem>"
 
 	return orderItem
 }
 
-func CallPaylive(envelope string) string {
-	var url = "https://stage.i-walletlive.com/webservices/paymentservice.asmx"
+func CallPaylive(envelope string) (result string, success bool) {
+	log.Printf("Calling server with payload: %s", envelope)
+
+	var url = "https://app.slydepay.com.gh/webservices/paymentservice.asmx"
 
 	resp, err := http.Post(url, "application/json", strings.NewReader(envelope))
 
 	if err != nil {
 		log.Fatalf("Error creating order on Paylive: %s", err.Error())
 		result := "Sorry, an error occurred"
-		return result
+		return result, false
 	}
 
 	if resp.StatusCode != 200 {
-		result := fmt.Sprintln("Error communicating with server: ", resp.StatusCode)
-		return result
+		result := fmt.Sprintln("Server returned HTTP status ", resp.StatusCode)
+		return result, false
 	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	result := string(body)
+	result = string(body)
 
 	log.Println("Server returned response: ", result)
-	return result
+	return result, true
 }
 
 func ParseToken(response string) (result string, success bool) {
