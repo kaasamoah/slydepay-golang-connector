@@ -1,4 +1,4 @@
-// paylive
+// paylive project client/soap/paylive.go
 package soap
 
 import (
@@ -16,26 +16,46 @@ import (
 type PayliveClient struct {
 }
 
-func CreateOrder(credentials model.PayliveCredentials, order model.PaymentOrder) (token string, success bool) {
+func CreateOrder(credentials model.PayliveCredentials, order model.PaymentOrder, isLive bool) (success bool, orderId string, token string, code string, message string) { //(token string, success bool) {
 	var envelope = "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pay=\"http://www.i-walletlive.com/payLIVE\">"
 	envelope += GenerateHeaderXML(credentials)
 	envelope += GenerateBodyXML(order)
 	envelope += "</soapenv:Envelope>"
 
-	response, success := CallPaylive(envelope)
+	response, success := CallPaylive(envelope, isLive)
+
 	if !success {
-		return response, success
+		return false, order.OrderId(), "", "", response
 	}
-	return ParseToken(response)
+
+	msg, success := ParseSuccess(response)
+	if !success {
+		msg, success = ParseError(response)
+		return false, order.OrderId(), "", "", msg
+	}
+
+	token, success = ParseToken(response)
+	if !success {
+		return false, order.OrderId(), "", "", token
+	}
+	//return token, success
+
+	payCode, success := ParsePayCode(response)
+
+	if !success {
+		return false, order.OrderId(), "", "", payCode
+	}
+
+	return true, order.OrderId(), token, code, ""
 }
 
-func VerifyPayment(credentials model.PayliveCredentials, orderId string) (result string, success bool) {
+func VerifyPayment(credentials model.PayliveCredentials, orderId string, isLive bool) (result string, success bool) {
 	var envelope = "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pay=\"http://www.i-walletlive.com/payLIVE\">"
 	envelope += GenerateHeaderXML(credentials)
 	envelope += fmt.Sprintf("<soapenv:Body><pay:verifyMobilePayment><pay:orderId>%s</pay:orderId></pay:verifyMobilePayment></soapenv:Body>", orderId)
 	envelope += "</soapenv:Envelope>"
 
-	response, success := CallPaylive(envelope)
+	response, success := CallPaylive(envelope, isLive)
 	if !success {
 		return response, success
 	}
@@ -72,13 +92,13 @@ func VerifyPayment(credentials model.PayliveCredentials, orderId string) (result
 	return transactionId, true
 }
 
-func ConfirmOrder(credentials model.PayliveCredentials, token string, transactionId string) (result string, success bool) {
+func ConfirmOrder(credentials model.PayliveCredentials, token string, transactionId string, isLive bool) (result string, success bool) {
 	var envelope = "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pay=\"http://www.i-walletlive.com/payLIVE\">"
 	envelope += GenerateHeaderXML(credentials)
 	envelope += fmt.Sprintf("<soapenv:Body><pay:ConfirmTransaction><pay:payToken>%s</pay:payToken><pay:transactionId>%s</pay:transactionId></pay:ConfirmTransaction></soapenv:Body>", token, transactionId)
 	envelope += "</soapenv:Envelope>"
 
-	response, success := CallPaylive(envelope)
+	response, success := CallPaylive(envelope, isLive)
 	if !success {
 		return response, success
 	}
@@ -103,13 +123,13 @@ func ConfirmOrder(credentials model.PayliveCredentials, token string, transactio
 	return "Transaction completed successfully", true
 }
 
-func CancelOrder(credentials model.PayliveCredentials, token string, transactionId string) (result string, success bool) {
+func CancelOrder(credentials model.PayliveCredentials, token string, transactionId string, isLive bool) (result string, success bool) {
 	var envelope = "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pay=\"http://www.i-walletlive.com/payLIVE\">"
 	envelope += GenerateHeaderXML(credentials)
 	envelope += fmt.Sprintf("<soapenv:Body><pay:CancelTransaction><pay:payToken>%s</pay:payToken><pay:transactionId>%s</pay:transactionId></pay:CancelTransaction></soapenv:Body>", token, transactionId)
 	envelope += "</soapenv:Envelope>"
 
-	response, success := CallPaylive(envelope)
+	response, success := CallPaylive(envelope, isLive)
 	if !success {
 		return response, success
 	}
@@ -150,7 +170,7 @@ func GenerateHeaderXML(credentials model.PayliveCredentials) (headerXML string) 
 
 func GenerateBodyXML(order model.PaymentOrder) (bodyXML string) {
 	var body = "<soapenv:Body>"
-	body += "<pay:ProcessPaymentOrder>"
+	body += "<pay:mobilePaymentOrder>"
 	body += "<pay:orderId>" + order.OrderId() + "</pay:orderId>"
 	body += "<pay:subtotal>" + strconv.FormatFloat(order.SubTotal(), 'f', -1, 32) + "</pay:subtotal>"
 	body += "<pay:shippingCost>" + strconv.FormatFloat(order.Shipping(), 'f', -1, 32) + "</pay:shippingCost>"
@@ -165,7 +185,7 @@ func GenerateBodyXML(order model.PaymentOrder) (bodyXML string) {
 	}
 
 	body += "</pay:orderItems>"
-	body += "</pay:ProcessPaymentOrder>"
+	body += "</pay:mobilePaymentOrder>"
 	body += "</soapenv:Body>"
 
 	return body
@@ -183,10 +203,13 @@ func GenerateItemXML(item model.OrderItem) (itemXML string) {
 	return orderItem
 }
 
-func CallPaylive(envelope string) (result string, success bool) {
-	log.Printf("Calling server with payload: %s", envelope)
+func CallPaylive(envelope string, isLive bool) (result string, success bool) {
+	// log.Printf("Calling server with payload: %s", envelope)
 
-	var url = "https://app.slydepay.com.gh/webservices/paymentservice.asmx"
+	var url string = "https://stage.i-walletlive.com/webservices/paymentservice.asmx"
+	if isLive {
+		url = "https://app.slydepay.com.gh/webservices/paymentservice.asmx"
+	}
 
 	resp, err := http.Post(url, "application/json", strings.NewReader(envelope))
 
@@ -205,19 +228,66 @@ func CallPaylive(envelope string) (result string, success bool) {
 	body, err := ioutil.ReadAll(resp.Body)
 	result = string(body)
 
-	log.Println("Server returned response: ", result)
+	// log.Println("Server returned response: ", result)
 	return result, true
 }
 
-func ParseToken(response string) (result string, success bool) {
-	path := xmlpath.MustCompile("//ProcessPaymentOrderResponse")
+func ParseSuccess(response string) (result string, success bool) {
+	var successful bool = false
+
+	isSuccess := xmlpath.MustCompile("//success")
 
 	root, err := xmlpath.Parse(strings.NewReader(response))
 	if err != nil {
 		log.Fatalf("Error reading response from server: %s", err.Error())
 		return "Unexpected response from server", false
 	}
-	if value, ok := path.String(root); ok {
+	if value, ok := isSuccess.String(root); ok {
+		successful, err = strconv.ParseBool(value)
+	}
+	if err != nil {
+		return "Unexpected response from server", false
+	}
+	return "Success", successful
+}
+
+func ParseToken(response string) (result string, success bool) {
+	token := xmlpath.MustCompile("//token")
+
+	root, err := xmlpath.Parse(strings.NewReader(response))
+	if err != nil {
+		log.Fatalf("Error reading response from server: %s", err.Error())
+		return "Unexpected response from server", false
+	}
+	if value, ok := token.String(root); ok {
+		return value, true
+	}
+	return "Error contacting server", false
+}
+
+func ParsePayCode(response string) (result string, success bool) {
+	orderCode := xmlpath.MustCompile("//orderCode")
+
+	root, err := xmlpath.Parse(strings.NewReader(response))
+	if err != nil {
+		log.Fatalf("Error reading response from server: %s", err.Error())
+		return "Unexpected response from server", false
+	}
+	if value, ok := orderCode.String(root); ok {
+		return value, true
+	}
+	return "Error contacting server", false
+}
+
+func ParseError(response string) (result string, success bool) {
+	error := xmlpath.MustCompile("//error")
+
+	root, err := xmlpath.Parse(strings.NewReader(response))
+	if err != nil {
+		log.Fatalf("Error reading response from server: %s", err.Error())
+		return "Unexpected response from server", false
+	}
+	if value, ok := error.String(root); ok {
 		return value, true
 	}
 	return "Error contacting server", false

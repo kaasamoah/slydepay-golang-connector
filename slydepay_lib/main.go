@@ -1,4 +1,4 @@
-// slydepay_lib project slydepay_lib.go
+// slydepay_lib project main.go
 package slydepay_lib
 
 import (
@@ -8,8 +8,8 @@ import (
 	"os"
 	"slydepay_lib/client/soap"
 	"slydepay_lib/model"
-	"strconv"
-	"time"
+	//	"strconv"
+	//	"time"
 )
 
 const AppVersion = "1.0.0 beta"
@@ -64,13 +64,13 @@ func main() {
 	//		log.Println("Failed")
 	//	}
 
-	result := CreateOrder("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", strconv.FormatInt(time.Now().UnixNano(), 16), 2.5, 0, 0, 2.5, "Another test", "003", "Third Item")
-	log.Println(result)
-
-	//	result := VerifyPayment("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", "2015122202")
+	//	result := CreateOrder("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", strconv.FormatInt(time.Now().UnixNano(), 16), 2.5, 0, 0, 2.5, "Another test", "003", "Third Item", false)
 	//	log.Println(result)
 
-	//	result := CancelOrder("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", "6e53478d-5339-47c4-8712-338f963f72ec", "59bbc1aa-83aa-41fa-a5a9-2f626d7931a8")
+	//	result := VerifyPayment("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", "142944ca154a58c4", false)
+	//	log.Println(result)
+
+	//	result := CancelOrder("iwallet@dreamoval.com", "bdVI+jtRl80PG4x6NMvYOwfZTZtwfN", "6e53478d-5339-47c4-8712-338f963f72ec", "59bbc1aa-83aa-41fa-a5a9-2f626d7931a8", false)
 	//	log.Println(result)
 
 	//Next Steps: Check if response message contains (starts with) 'Error'.
@@ -79,7 +79,7 @@ func main() {
 
 }
 
-func CreateOrder(merchantEmail string, merchantKey string, orderId string, subTotal float64, shipping float64, tax float64, total float64, comment string, itemCode string, description string) string {
+func CreateOrder(merchantEmail string, merchantKey string, orderId string, subTotal float64, shipping float64, tax float64, total float64, comment string, itemCode string, description string, isLive bool) (response *APIResult) {
 	creds := new(model.PayliveCredentials)
 	creds.SetMerchantEmail(merchantEmail)
 	creds.SetMerchantKey(merchantKey)
@@ -104,11 +104,20 @@ func CreateOrder(merchantEmail string, merchantKey string, orderId string, subTo
 
 	order.SetItems(items)
 
-	result, success := soap.CreateOrder(*creds, *order)
-	if !success {
-		log.Fatalf("Order generation failed")
-		return "Error: " + result
-	}
+	success, orderId, token, paycode, message := soap.CreateOrder(*creds, *order, isLive)
+
+	result := new(APIResult)
+	result.Success = success
+	result.Message = message
+	result.OrderId = orderId
+	result.PayCode = paycode
+	result.Token = token
+
+	//	result, success := soap.CreateOrder(*creds, *order)
+	//	if !success {
+	//		log.Fatalf("Order generation failed")
+	//		return "Error: " + result
+	//	}
 	return result
 }
 
@@ -135,43 +144,62 @@ func CreateOrder(merchantEmail string, merchantKey string, orderId string, subTo
 //	return result
 //}
 
-func VerifyPayment(merchantEmail string, merchantKey string, orderId string) string {
+func VerifyPayment(merchantEmail string, merchantKey string, orderId string, isLive bool) (apiResult *APIResult) {
 	creds := new(model.PayliveCredentials)
 	creds.SetMerchantEmail(merchantEmail)
 	creds.SetMerchantKey(merchantKey)
 
-	result, success := soap.VerifyPayment(*creds, orderId)
+	response := new(APIResult)
+	response.OrderId = orderId
+
+	result, success := soap.VerifyPayment(*creds, orderId, isLive)
+
+	response.Success = success
 	if !success {
-		log.Fatalf("Error verifying payment")
-		return "Error: " + result
+		log.Fatalf("Error verifying payment: %s", result)
+		response.Message = result
+		return response
 	}
-	return result
+	response.TransactionId = result
+	return response
 }
 
-func ConfirmOrder(merchantEmail string, merchantKey string, token string, transactionId string) string {
+func ConfirmOrder(merchantEmail string, merchantKey string, token string, transactionId string, isLive bool) (apiResult *APIResult) {
 	creds := new(model.PayliveCredentials)
 	creds.SetMerchantEmail(merchantEmail)
 	creds.SetMerchantKey(merchantKey)
 
-	result, success := soap.ConfirmOrder(*creds, token, transactionId)
+	response := new(APIResult)
+	response.Token = token
+	response.TransactionId = transactionId
+
+	result, success := soap.ConfirmOrder(*creds, token, transactionId, isLive)
+	response.Success = success
 
 	if !success {
-		log.Fatalf("Transaction confirmation failed")
-		return "Error: " + result
+		log.Fatalf("Transaction confirmation failed: %s", result)
+		response.Message = result
+		return response
 	}
-	return result
+	return response
 }
 
-func CancelOrder(merchantEmail string, merchantKey string, token string, transactionId string) string {
+func CancelOrder(merchantEmail string, merchantKey string, token string, transactionId string, isLive bool) (apiResult *APIResult) {
 	creds := new(model.PayliveCredentials)
 	creds.SetMerchantEmail(merchantEmail)
 	creds.SetMerchantKey(merchantKey)
 
-	result, success := soap.CancelOrder(*creds, token, transactionId)
+	response := new(APIResult)
+	response.Token = token
+	response.TransactionId = transactionId
+
+	result, success := soap.CancelOrder(*creds, token, transactionId, isLive)
+	response.Success = success
 
 	if !success {
-		log.Fatalf("Transaction confirmation failed")
-		return "Error: " + result
+		log.Fatalf("Transaction cancellation failed: %s", result)
+		response.Message = result
+		return response
 	}
-	return result
+	return response
 }
